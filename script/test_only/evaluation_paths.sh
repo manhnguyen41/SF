@@ -7,10 +7,16 @@
 # Python environment containing torch, pandas, scikit-learn, scipy, peft, etc.
 export PYTHON_BIN="${PYTHON_BIN:-python}"
 
+# Inference-only batch size. Checkpoint naming still uses the trained value 32.
+export VIFOS_EVAL_BATCH_SIZE="${VIFOS_EVAL_BATCH_SIZE:-2}"
+
 # GPU and local output locations.
 export GPU_ID="${GPU_ID:-0}"
 export RESULTS_DIR="${RESULTS_DIR:-experiment_results}"
 export THRESHOLDS_FILE="${THRESHOLDS_FILE:-${RESULTS_DIR}/thresholds/train_rainfall_percentiles.json}"
+
+# Completed seed outputs are kept and skipped on subsequent invocations.
+export VIFOS_SKIP_EXISTING_RESULTS="${VIFOS_SKIP_EXISTING_RESULTS:-1}"
 
 # Directory containing data6789_reg_1_seed{52,62,72,82,92}_new_all.
 export DATA_IDX_ROOT="${DATA_IDX_ROOT:-/mnt/disk3/tunm/Subseasonal_Forecasting/data3}"

@@ -274,7 +274,18 @@ def _synchronize(device):
 
 def main():
     _args, config = get_option()
+    trained_batch_size = int(config.TRAIN.BATCH_SIZE)
     config.WANDB.SESSION_NAME = get_session_name(config)
+    evaluation_batch_size = int(
+        os.getenv("VIFOS_EVAL_BATCH_SIZE", str(trained_batch_size))
+    )
+    if evaluation_batch_size <= 0:
+        raise ValueError(
+            f"VIFOS_EVAL_BATCH_SIZE must be positive, got {evaluation_batch_size}."
+        )
+    # The checkpoint/session name above must retain the training batch size.
+    # Only the evaluation DataLoaders use this lower-memory override.
+    config.TRAIN.BATCH_SIZE = evaluation_batch_size
     test_only = _is_enabled("VIFOS_TEST_ONLY")
     thresholds_only = _is_enabled("VIFOS_COMPUTE_THRESHOLDS_ONLY")
     if (test_only or thresholds_only) and not _is_enabled("VIFOS_ENABLE_WANDB"):
@@ -381,7 +392,8 @@ def main():
         "pytorch_version": torch.__version__,
         "cuda_version": torch.version.cuda,
         "gpu_name": torch.cuda.get_device_name(device) if device.type == "cuda" else None,
-        "batch_size": int(config.TRAIN.BATCH_SIZE),
+        "training_batch_size": trained_batch_size,
+        "evaluation_batch_size": evaluation_batch_size,
         "data_index_dir": str(config.DATA.DATA_IDX_DIR),
         "test_index_path": str(Path(config.DATA.DATA_IDX_DIR) / "test.csv"),
         "test_index_sha256": (
