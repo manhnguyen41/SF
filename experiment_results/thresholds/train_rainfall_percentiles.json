@@ -1,0 +1,23 @@
+{
+  "source_split": "train",
+  "source_split_path": "/mnt/disk3/tunm/Subseasonal_Forecasting/data3/data6789_reg_1_seed92_new_all/train.csv",
+  "source_split_sha256": "06b708218447c99c7cd864a1fda1feb828f36e6ad67ddd2255b3ebd7c6eb6fec",
+  "source_gauge_path": "/mnt/disk3/longnd/env_data/Gauge_thay_Tan/Final_Data_2002_2024_Region_1.csv",
+  "split_policy": "common_identical_train_split_across_seeds_52_62_72_82_92",
+  "unit": "mm/week",
+  "accumulation_days": 7,
+  "n_observations": 890880,
+  "minimum": 0.0,
+  "maximum": 514.0,
+  "computed_at_utc": "2026-08-10T05:12:28.260869+00:00",
+  "daily_gauge_clipping_mm": [
+    0.0,
+    300.0
+  ],
+  "weekly_accumulation_clipping": "none",
+  "percentiles": {
+    "p90": 90.39999999999995,
+    "p95": 124.69999999999992,
+    "p99": 212.49999999999994
+  }
+}
