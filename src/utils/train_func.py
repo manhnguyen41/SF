@@ -192,7 +192,9 @@ def train_func(model, train_dataset, valid_dataset, early_stopping, loss_func, o
         else:
             raise ValueError(f"Unsupported scheduler type: {config.LRS.NAME}. Choose 'CosineAnnealingLR' or 'ReduceLROnPlateau'")
 
-    train_dataloader = DataLoader(train_dataset, batch_size=config.TRAIN.BATCH_SIZE, shuffle=False, num_workers=config.TRAIN.NUMBER_WORKERS, collate_fn=utils.custom_collate_fn)
+    train_generator = torch.Generator()
+    train_generator.manual_seed(int(config.MODEL.SEED))
+    train_dataloader = DataLoader(train_dataset, batch_size=config.TRAIN.BATCH_SIZE, shuffle=True, generator=train_generator, num_workers=config.TRAIN.NUMBER_WORKERS, collate_fn=utils.custom_collate_fn)
     valid_dataloader = DataLoader(valid_dataset, batch_size=config.TRAIN.BATCH_SIZE, shuffle=False, num_workers=config.TRAIN.NUMBER_WORKERS, collate_fn=utils.custom_collate_fn)
 
     # Training loop
@@ -599,7 +601,9 @@ def train_func_2head(model, train_dataset, valid_dataset, early_stopping, loss_f
         else:
             raise ValueError(f"Unsupported scheduler type: {config.LRS.NAME}. Choose 'CosineAnnealingLR' or 'ReduceLROnPlateau'")
 
-    train_dataloader = DataLoader(train_dataset, batch_size=config.TRAIN.BATCH_SIZE, shuffle=False, num_workers=config.TRAIN.NUMBER_WORKERS, collate_fn=utils.custom_collate_fn)
+    train_generator = torch.Generator()
+    train_generator.manual_seed(int(config.MODEL.SEED))
+    train_dataloader = DataLoader(train_dataset, batch_size=config.TRAIN.BATCH_SIZE, shuffle=True, generator=train_generator, num_workers=config.TRAIN.NUMBER_WORKERS, collate_fn=utils.custom_collate_fn)
     valid_dataloader = DataLoader(valid_dataset, batch_size=config.TRAIN.BATCH_SIZE, shuffle=False, num_workers=config.TRAIN.NUMBER_WORKERS, collate_fn=utils.custom_collate_fn)
 
     # Training loop
@@ -755,7 +759,9 @@ def train_func_2head_phase_2(model, train_dataset, valid_dataset, early_stopping
         else:
             raise ValueError(f"Unsupported scheduler type: {config.LRS.NAME}. Choose 'CosineAnnealingLR' or 'ReduceLROnPlateau'")
 
-    train_dataloader = DataLoader(train_dataset, batch_size=config.TRAIN.BATCH_SIZE, shuffle=False, num_workers=config.TRAIN.NUMBER_WORKERS, collate_fn=utils.custom_collate_fn)
+    train_generator = torch.Generator()
+    train_generator.manual_seed(int(config.MODEL.SEED))
+    train_dataloader = DataLoader(train_dataset, batch_size=config.TRAIN.BATCH_SIZE, shuffle=True, generator=train_generator, num_workers=config.TRAIN.NUMBER_WORKERS, collate_fn=utils.custom_collate_fn)
     valid_dataloader = DataLoader(valid_dataset, batch_size=config.TRAIN.BATCH_SIZE, shuffle=False, num_workers=config.TRAIN.NUMBER_WORKERS, collate_fn=utils.custom_collate_fn)
 
     # Training loop

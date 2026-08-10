@@ -157,7 +157,9 @@ def main():
     total_params = sum(p.numel() for p in model.parameters())
     print(f"Total parameters: {total_params}")
     
-    train_dataset = CustomDataset3(mode='train', config=config, ecmwf_scaler=input_scaler, esp_scaler=esp_scaler, output_scaler= output_scaler, shuffle=True)
+    # Keep Dataset index -> sample mapping stable so positional caches are
+    # generated deterministically. Training order is shuffled by DataLoader.
+    train_dataset = CustomDataset3(mode='train', config=config, ecmwf_scaler=input_scaler, esp_scaler=esp_scaler, output_scaler= output_scaler, shuffle=False)
     valid_dataset = CustomDataset3(mode='valid', config=config, ecmwf_scaler=input_scaler, esp_scaler=esp_scaler, output_scaler= output_scaler)
     test_dataset = CustomDataset3(mode='test', config=config, ecmwf_scaler=input_scaler, esp_scaler=esp_scaler, output_scaler= output_scaler)
     if config.MODEL.NAME.lower() == "quantitle":
