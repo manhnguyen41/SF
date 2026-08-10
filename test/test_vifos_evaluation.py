@@ -6,7 +6,7 @@ import numpy as np
 import pytest
 
 from src.utils import test_func_only as evaluation
-from src.utils.evaluation_io import require_checkpoint
+from src.utils.evaluation_io import require_checkpoint, resolve_checkpoint_path
 
 
 def test_perfect_prediction_metrics():
@@ -104,6 +104,23 @@ def test_missing_checkpoint_fails_before_training(tmp_path, monkeypatch):
     monkeypatch.delenv("VIFOS_CHECKPOINT_PATH", raising=False)
     with pytest.raises(FileNotFoundError, match="Paths tried"):
         require_checkpoint(config)
+
+
+def test_strans_v4b_resolves_legacy_and_new_session_labels(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.delenv("VIFOS_CHECKPOINT_PATH", raising=False)
+    session = "prefix_Modelv1_PS-3_Seed-52_suffix"
+    config = SimpleNamespace(
+        MODEL=SimpleNamespace(SEED=52, NAME="strans-v4b"),
+        WANDB=SimpleNamespace(GROUP_NAME="group", SESSION_NAME=session),
+    )
+    checkpoint_dir = tmp_path / "saved_checkpoints" / "group"
+    checkpoint_dir.mkdir(parents=True)
+    expected = checkpoint_dir / session.replace("_Modelv1_", "_Strans-V4b_")
+    expected = expected.with_suffix(".pt")
+    expected.touch()
+    resolved, _ = resolve_checkpoint_path(config)
+    assert resolved == expected.resolve()
 
 
 def test_thresholds_read_only_train_index_and_gauge_files(tmp_path):
