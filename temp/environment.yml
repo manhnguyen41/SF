@@ -1,0 +1,54 @@
+name: tunm
+channels:
+  - pytorch
+  - nvidia
+  - dglteam
+  - conda-forge
+  - defaults
+dependencies:
+  # --- Nền tảng chính ---
+  - python=3.11
+  - pip
+
+  # --- PyTorch và các gói liên quan cho GPU ---
+  - pytorch
+  - torchvision
+  - torchaudio
+  - pytorch-cuda=12.1  # Giữ lại yêu cầu CUDA này là quan trọng
+
+  # --- Thư viện chính của dự án ---
+  - dgl          # Deep Graph Library
+  - timm         # PyTorch Image Models
+  - transformers # Hugging Face Transformers
+  - opencv       # OpenCV for computer vision
+  - wandb        # Weights & Biases for experiment tracking
+  - yacs         # Yet Another Configuration System
+
+  # --- Khoa học dữ liệu và tính toán ---
+  - numpy
+  - pandas
+  - scikit-learn>=0.24  # Yêu cầu phiên bản scikit-learn như bạn muốn
+  - scipy
+
+  # --- Trực quan hóa và xử lý dữ liệu không gian ---
+  - matplotlib
+  - cartopy
+  - netcdf4
+  - xarray
+  - geopandas
+  - holoviews
+  - hvplot
+  - bokeh
+  - plotly
+
+  # --- Các gói phụ trợ cho Jupyter và các công cụ khác ---
+  - jupyterlab
+  - openpyxl     # Để đọc/ghi file Excel
+  - tqdm         # Thanh tiến trình
+  - gitpython    # Để tương tác với Git
+
+  # --- Các gói chỉ có trên pip (nếu cần) ---
+  # Thường thì các gói lớn như transformers, timm nên được cài qua conda
+  # nếu có thể để tránh xung đột. Ta đã chuyển chúng lên trên.
+  # pip:
+  #   - some-package-only-on-pip

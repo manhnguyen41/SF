@@ -1,0 +1,1 @@
+CUDA_VISIBLE_DEVICES=2 python main.py --in_channel 13 --adding_type 0 --dropout 0.1 --batch_size 16 --model_type cnn-lstm --group_name baseline

@@ -1,0 +1,1 @@
+CUDA_VISIBLE_DEVICES=1 python main.py --in_channel 13 --adding_type 0 --use_layer_norm --dropout 0.3 --batch_size 8 --model_type conv-lstm --debug

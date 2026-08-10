@@ -1,0 +1,51 @@
+LEARNING_RATES=(2e-4 2e-5 5e-6 2e-6)
+DROPOUT_RATES=(0.4 0.5 0.6)
+BATCH_SIZES=(64)
+NUMBLOCK=(12)
+PATCH=(4)
+for bs in "${BATCH_SIZES[@]}"; do
+  for dr in "${DROPOUT_RATES[@]}"; do
+    for lr in "${LEARNING_RATES[@]}"; do
+      for block in "${NUMBLOCK[@]}"; do
+        for pat in "${PATCH[@]}"; do
+          CUDA_VISIBLE_DEVICES=0 python main.py --cfg config/default.yaml \
+          --name strans-v5 \
+          --in_channel 13 \
+          --adding_type 0 \
+          --dropout "$dr" \
+          --height 17 \
+          --width 17 \
+          --data_idx_dir /mnt/disk3/tunm/Subseasonal_Forecasting/data1/data6789_reg_1_seed52_new_short \
+          --gauge_data_path /mnt/disk3/longnd/env_data/Gauge_thay_Tan/Final_Data_2002_2024_Region_1.csv \
+          --npyarr_dir /mnt/disk3/longnd/env_data/grid_base/nparr_reg1/Step24h \
+          --processed_ecmwf_dir /mnt/disk3/longnd/env_data/grid_base/data1_reg_1_new_short \
+          --esp_data_path /mnt/disk3/longnd/env_data/grid_base/GMSaP/preprocess_region_1 \
+          --lat_start 22.75 \
+          --lon_start 102.75 \
+          --use_layer_norm \
+          --loss_func weightedmse \
+          --lr "$lr" \
+          --use_lrscheduler \
+          --scheduler_type ReduceLROnPlateau \
+          --plateau_patience 3 \
+          --plateau_min_lr 1e-9 \
+          --plateau_factor 0.5 --plateau_verbose \
+          --num_vit_blocks "$block" \
+          --group_name data1-r1-test-vit-tiny-short \
+          --batch_size "$bs" \
+          --num_epochs 1000\
+          --patch_size "$pat" \
+          --output_norm \
+          
+          
+        done
+      done
+    done
+  done
+done
+        
+        
+        
+        
+        
+        

@@ -1,0 +1,103 @@
+MODEL:
+  NAME: model_v1
+  SEED: 52
+  IN_CHANNEL: 13
+  ECMWF_TIME_STEP: 1
+  TIME_STEP: 15
+  PHASE_1_PATH: saved_checkpoints_phase_1/data3-r1-test-vit-tiny-short/checkpoint/BATCH_64_Add_type_0data3-r1-test-vit-tiny-short_VIT_2Head_PS-3_Lr-2e-05_LF-weightedmse-wfn_abs_DR-0.25_LN-True-ST_0_3-ON_True_Seed-52_LRS-TrueGSMAP_time_step2ECMWF_time_step1_ReduceLROnPlateau-min-0.5-3VIT_Blocks_2.pt
+  SPATIAL:
+    TYPE: 0
+    OUT_CHANNEL: 64
+    NUM_LAYERS: 3
+    USE_BATCH_NORM: False
+  TEMPORAL:
+    HIDDEN_DIM: 256
+    NUM_LAYERS: 2
+    MAX_DELTA_T: 46
+    ADDING_TYPE: 0
+  SWIN_TRANSFORMER:
+    EMBED_DIM: 128
+    NUM_HEADS: 8
+    NUM_LAYERS: 4
+    FF_DIM: 256
+    WINDOW_SIZE: 7
+  RADIUS: 1
+  PRED:
+    NUM_LAYERS: 8
+    HIDDEN_DIM: 64
+  PROMPT_TYPE: 0
+  USE_LAYER_NORM: False
+  DROPOUT: 0.3
+  WINDOW_SIZE: 7
+  NUM_HEADS: 4
+  PATCH_SIZE: 4
+  R: 32
+  RAIN_THRESHOLD: 1
+
+TRAIN:
+  OUTPUT_NORM: False
+  BATCH_SIZE: 16
+  EPOCHS: 1000
+  WARMUP_EPOCHS: 10
+  MIN_LR: 0.00001
+  WEIGHT_DECAY: 0.05
+  LAYER_DECAY: 0.8
+  NUMBER_WORKERS: 0
+  INPUT_NORM: False
+  NUM_VITBLOCKS: 6
+  
+
+OPTIMIZER:
+  NAME: adamw
+  LR: 0.001
+  L2_COEF: 0.000001
+  L1_COEF: 0.0001
+
+LOSS:
+  NAME: mse
+  k: 0.1
+  HIGH_WEIGHT: 20
+  LOW_WEIGHT: 1
+  DELTA: 2.5
+  ALPHA: 0.5
+  GROUNDTRUTH_THRESHOLD: 200
+  WEIGHT_FUNC: abs
+
+EARLY_STOPPING:
+  PATIANCE: 10
+  CHECKPOINT_DIR: checkpoint
+  DELTA: 0.00001
+
+DATA:
+  WINDOW_LENGTH: 7
+  DATA_IDX_DIR: /mnt/disk1/nxmanh/Hydrometeology/Subseasonal_Prediction/data/data789_seed52
+  GAUGE_DATA_PATH: /mnt/disk1/env_data/Gauge_thay_Tan/Final_Data.csv
+  NPYARR_DIR: /mnt/disk3/longnd/env_data/S2S_0.125_old/data2_reg_1/
+  PROCESSED_ECMWF_DIR: /mnt/disk3/longnd/env_data/S2S_0.125_old/data2_reg_1/
+  ESP_DATA_PATH: /mnt/disk3/longnd/env_data/grid_base/GMSaP/preprocess_region_1
+  LAT_START: 25
+  LON_START: 100
+  LAT_ESP_START: 25
+  LON_ESP_START: 100
+  HEIGHT: 137
+  WIDTH: 121
+  HEIGHT_ESP: 20
+  WIDTH_ESP: 20
+  RAIN_PROB: 0.01
+  RAIN_THRESHOLD: 300
+
+LRS:
+  USE_LRS: False
+  NAME: ReduceLROnPlateau
+  COSINE_T_MAX: 0.001  # Number of epochs for one cosine cycle (CosineAnnealingLR)
+  COSINE_ETA_MIN: 0.00001  # Minimum learning rate (CosineAnnealingLR)
+  PLATEAU_MODE: min
+  PLATEAU_FACTOR: null
+  PLATEAU_PATIENCE: null
+  PLATEAU_MIN_LR: null
+  PLATEAU_VERBOSE: null
+
+WANDB:
+  STATUS: TRUE
+  GROUP_NAME: test
+DEBUG: TRUE

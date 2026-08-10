@@ -1,0 +1,1 @@
+CUDA_VISIBLE_DEVICES=1 python re_run.py --in_channel 13 --adding_type 0 --dropout 0.1 --batch_size 8 --model_type conv-lstm --group_name baseline

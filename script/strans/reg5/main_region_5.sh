@@ -1,0 +1,23 @@
+CUDA_VISIBLE_DEVICES=0 python main.py --cfg config/default.yaml  \
+        --name strans-v2 \
+        --in_channel 13 \
+        --adding_type 0 \
+        --dropout 0.3 \
+        --height 47 \
+        --width 13 \
+        --data_idx_dir /mnt/disk1/tunn/Subseasonal_Prediction/data2/data91011_reg_5_seed52 \
+        --gauge_data_path /mnt/disk1/env_data/Gauge_thay_Tan/Final_Data_Region_5.csv \
+        --npyarr_dir /mnt/disk1/env_data/S2S_0.125/nparr_reg_5/Step24h \
+        --processed_ecmwf_dir /mnt/disk1/env_data/S2S_0.125/reg_5 \
+        --lat_start 16.25 \
+        --lon_start 108 \
+        --use_layer_norm \
+        --loss_func mse \
+        --lr 5e-4 \
+        --use_lrscheduler \
+        --scheduler_type ReduceLROnPlateau \
+        --plateau_patience 3 \
+        --plateau_min_lr 1e-6 \
+        --plateau_factor 0.5 --plateau_verbose \
+        --group_name data2-region5 \
+        --batch_size 32
