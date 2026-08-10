@@ -1,5 +1,4 @@
 import argparse
-from yacs.config import CfgNode as CN
 import yaml
 from types import SimpleNamespace
 

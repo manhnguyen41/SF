@@ -17,6 +17,8 @@ def get_session_name(config):
         model_name = 'Strans-V3'
     elif config.MODEL.NAME == 'strans-v4': 
         model_name = 'Strans-V4'
+    elif config.MODEL.NAME == 'strans-v4b':
+        model_name = 'Strans-V4b'
     elif config.MODEL.NAME == 'strans-v5': 
         model_name = 'Strans-V5'
     elif config.MODEL.NAME == 'strans-v6': 

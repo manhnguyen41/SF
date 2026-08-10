@@ -1,7 +1,10 @@
 import os
 import torch
 import torch.nn as nn
-import wandb
+try:
+    import wandb
+except ImportError:
+    wandb = None
 from torch.utils.data import DataLoader
 from tqdm import tqdm
 import numpy as np
@@ -880,4 +883,3 @@ def train_func_2head_phase_2(model, train_dataset, valid_dataset, early_stopping
         'learning_rates': results['learning_rates'],
         'scheduler_type': config.LRS.NAME if config.LRS.USE_LRS else 'None'
     }
-      

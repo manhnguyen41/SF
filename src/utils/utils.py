@@ -1,7 +1,10 @@
 import random, os
 import numpy as np
 import torch
-import wandb
+try:
+    import wandb
+except ImportError:
+    wandb = None
 import numpy as np
 
 def custom_collate_fn(batch):

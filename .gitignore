@@ -2,3 +2,4 @@ wandb/
 saved_checkpoints*/
 *.pt
 *.log
+*.md

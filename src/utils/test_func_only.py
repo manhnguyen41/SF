@@ -8,6 +8,8 @@ arguments are optional.
 
 import csv
 import glob
+import hashlib
+import itertools
 import json
 import math
 import os
@@ -17,8 +19,12 @@ from pathlib import Path
 
 import matplotlib.pyplot as plt
 import numpy as np
+import pandas as pd
 import torch
-import wandb
+try:
+    import wandb
+except ImportError:
+    wandb = None
 from sklearn.metrics import (
     mean_absolute_error,
     mean_absolute_percentage_error,
@@ -52,9 +58,8 @@ DEFAULT_STATIONS = (
 SUMMARY_METRICS = (
     "mae",
     "mse",
-    "mape",
     "rmse",
-    "r2",
+    "r2_station_mean",
     "r2_pooled",
     "corr",
     "bias",
@@ -101,6 +106,8 @@ def _safe_r2(y_prd, y_grt, pooled=False):
 
     if y_grt.shape[0] < 2:
         return float("nan")
+    if np.any(np.var(y_grt, axis=0) == 0):
+        return float("nan")
 
     # Preserve the legacy result used by the current paper: sklearn averages
     # the R2 values of all station columns for a two-dimensional input.
@@ -143,9 +150,8 @@ def metric_dict(y_prd, y_grt):
         "n": int(np.sum(valid)),
         "mae": mae,
         "mse": mse,
-        "mape": mape,
         "rmse": rmse,
-        "r2": r2,
+        "r2_station_mean": r2,
         "r2_pooled": _safe_r2(y_prd, y_grt, pooled=True),
         "corr": corr,
         "bias": bias,
@@ -191,6 +197,28 @@ def _extract_coords(y_with_metadata):
         # Dataset convention used by test_func_quantile: [rain, lon, lat].
         return values[:, :, 1].astype(float), values[:, :, 2].astype(float)
     return None, None
+
+
+def _sample_ids_from_dataset(dataset, expected_count):
+    """Build stable IDs from the split rows, never from batch ordering alone."""
+    rows = getattr(dataset, "idx_df", None)
+    if rows is None or len(rows) != expected_count:
+        ids = [f"dataset_index_{index:08d}" for index in range(expected_count)]
+        source = "dataset_index_fallback"
+    else:
+        ids = []
+        for index, row in enumerate(np.asarray(rows, dtype=object)):
+            if len(row) >= 6:
+                lead, year, month, day = row[2], row[3], row[4], row[5]
+                ids.append(
+                    f"{int(year):04d}-{int(month):02d}-{int(day):02d}"
+                    f"_lead_{int(lead):02d}"
+                )
+            else:
+                ids.append(f"dataset_index_{index:08d}")
+        source = "data_index_csv_date_and_lead_time"
+    checksum = hashlib.sha256("\n".join(ids).encode("utf-8")).hexdigest()
+    return np.asarray(ids, dtype=str), source, checksum
 
 
 def _match_station(station_index, lon, lat, tolerance=0.06):
@@ -315,7 +343,6 @@ def compute_training_percentiles(
         rain = y_grt[:, :, 0]
         if config.TRAIN.OUTPUT_NORM:
             rain = output_scaler.inverse_transform(rain)
-        rain = np.clip(rain, 0, config.DATA.RAIN_THRESHOLD)
         observations.append(rain.reshape(-1))
 
     if not observations:
@@ -329,13 +356,92 @@ def compute_training_percentiles(
         f"p{int(percentile)}": float(np.percentile(observations, percentile))
         for percentile in percentiles
     }
+    split_path = Path(config.DATA.DATA_IDX_DIR) / "train.csv"
+    split_checksum = None
+    if split_path.is_file():
+        digest = hashlib.sha256()
+        with split_path.open("rb") as stream:
+            for chunk in iter(lambda: stream.read(1024 * 1024), b""):
+                digest.update(chunk)
+        split_checksum = digest.hexdigest()
     payload = {
         "source_split": "train",
+        "source_split_path": str(split_path),
+        "source_split_sha256": split_checksum,
+        "split_policy": "common_identical_train_split_across_seeds_52_62_72_82_92",
         "unit": "mm/week",
         "n_observations": int(observations.size),
         "minimum": float(np.min(observations)),
         "maximum": float(np.max(observations)),
         "computed_at_utc": datetime.now(timezone.utc).isoformat(),
+        "clipping": "none",
+        "percentiles": percentile_values,
+    }
+    _write_json(output_path, payload)
+    return percentile_values
+
+
+def compute_training_percentiles_from_files(
+    config, output_path, percentiles=(90, 95, 99)
+):
+    """Compute thresholds from gauge/train-index files without model inputs."""
+    split_path = Path(config.DATA.DATA_IDX_DIR) / "train.csv"
+    split = pd.read_csv(split_path)
+    gauge = pd.read_csv(config.DATA.GAUGE_DATA_PATH)
+    required_split = {"leadTime", "year", "month", "day"}
+    required_gauge = {"Day", "Station", "R"}
+    if not required_split.issubset(split.columns):
+        raise ValueError(f"Train index is missing columns: {required_split - set(split.columns)}")
+    if not required_gauge.issubset(gauge.columns):
+        raise ValueError(f"Gauge data is missing columns: {required_gauge - set(gauge.columns)}")
+
+    base_dates = pd.to_datetime(
+        {"year": split["year"], "month": split["month"], "day": split["day"]},
+        errors="coerce",
+    )
+    invalid = base_dates.isna()
+    if invalid.any():
+        fallback = pd.to_datetime(
+            {"year": split.loc[invalid, "year"], "month": 2, "day": 28}
+        )
+        base_dates.loc[invalid] = fallback.to_numpy()
+    target_dates = base_dates + pd.to_timedelta(split["leadTime"], unit="D")
+
+    gauge["Day"] = pd.to_datetime(gauge["Day"])
+    gauge["R"] = pd.to_numeric(gauge["R"], errors="coerce").clip(
+        lower=0, upper=float(config.DATA.RAIN_THRESHOLD)
+    )
+    daily = gauge.pivot_table(
+        index="Day", columns="Station", values="R", aggfunc="sum", fill_value=0
+    ).sort_index()
+    calendar = pd.date_range(daily.index.min(), daily.index.max(), freq="D")
+    daily = daily.reindex(calendar, fill_value=0)
+    window_days = int(config.MODEL.ECMWF_TIME_STEP)
+    accumulated = daily.rolling(window=window_days, min_periods=window_days).sum()
+    observations = accumulated.reindex(target_dates).to_numpy(dtype=float).reshape(-1)
+    observations = observations[np.isfinite(observations)]
+    if observations.size == 0:
+        raise ValueError("Training rainfall contains no finite values.")
+
+    percentile_values = {
+        f"p{int(percentile)}": float(np.percentile(observations, percentile))
+        for percentile in percentiles
+    }
+    digest = hashlib.sha256(split_path.read_bytes()).hexdigest()
+    payload = {
+        "source_split": "train",
+        "source_split_path": str(split_path),
+        "source_split_sha256": digest,
+        "source_gauge_path": str(config.DATA.GAUGE_DATA_PATH),
+        "split_policy": "common_identical_train_split_across_seeds_52_62_72_82_92",
+        "unit": "mm/week",
+        "accumulation_days": window_days,
+        "n_observations": int(observations.size),
+        "minimum": float(np.min(observations)),
+        "maximum": float(np.max(observations)),
+        "computed_at_utc": datetime.now(timezone.utc).isoformat(),
+        "daily_gauge_clipping_mm": [0.0, float(config.DATA.RAIN_THRESHOLD)],
+        "weekly_accumulation_clipping": "none",
         "percentiles": percentile_values,
     }
     _write_json(output_path, payload)
@@ -363,14 +469,20 @@ def _station_rows(sources, observation, longitudes, latitudes, seed):
         lat = None if latitudes is None else np.nanmedian(latitudes[:, station_index])
         station = _match_station(station_index, lon, lat)
         for source_name, prediction in sources.items():
+            metrics = metric_dict(
+                prediction[:, station_index], observation[:, station_index]
+            )
             rows.append(
                 {
                     "seed": seed,
                     "forecast_source": source_name,
                     **station,
-                    **metric_dict(
-                        prediction[:, station_index], observation[:, station_index]
-                    ),
+                    "n": metrics["n"],
+                    "mae": metrics["mae"],
+                    "rmse": metrics["rmse"],
+                    "bias": metrics["bias"],
+                    "corr": metrics["corr"],
+                    "r2_station": metrics["r2_pooled"],
                 }
             )
     return rows
@@ -381,13 +493,19 @@ def _lead_time_rows(sources, observation, lead_times, seed):
     for lead_time in np.unique(lead_times):
         selected = np.isclose(lead_times, lead_time)
         for source_name, prediction in sources.items():
+            metrics = metric_dict(prediction[selected], observation[selected])
             rows.append(
                 {
                     "seed": seed,
                     "forecast_source": source_name,
                     "lead_time": float(lead_time),
                     "n_samples": int(np.sum(selected)),
-                    **metric_dict(prediction[selected], observation[selected]),
+                    "n": metrics["n"],
+                    "mae": metrics["mae"],
+                    "rmse": metrics["rmse"],
+                    "bias": metrics["bias"],
+                    "corr": metrics["corr"],
+                    "r2_pooled": metrics["r2_pooled"],
                 }
             )
     return rows
@@ -471,6 +589,7 @@ def _prediction_rows(
     longitudes,
     latitudes,
     seed,
+    sample_ids,
 ):
     rows = []
     sample_count, station_count = observation.shape
@@ -482,6 +601,7 @@ def _prediction_rows(
             row = {
                 "seed": seed,
                 "sample_index": sample_index,
+                "sample_id": str(sample_ids[sample_index]),
                 "lead_time": float(lead_times[sample_index]),
                 **station,
                 "observation": float(observation[sample_index, station_index]),
@@ -506,6 +626,9 @@ def save_evaluation_results(
     latitudes=None,
     extreme_thresholds=None,
     run_metadata=None,
+    sample_ids=None,
+    sample_id_source=None,
+    test_sample_checksum=None,
 ):
     """Save all artifacts required by the reviewer analyses."""
     result_dir = Path(result_dir)
@@ -523,6 +646,20 @@ def save_evaluation_results(
         raise ValueError(
             f"Expected {observation.shape[0]} lead times, got {lead_times.size}."
         )
+    if sample_ids is None:
+        sample_ids = np.asarray(
+            [f"dataset_index_{index:08d}" for index in range(observation.shape[0])]
+        )
+        sample_id_source = sample_id_source or "dataset_index_fallback"
+    sample_ids = np.asarray(sample_ids, dtype=str).reshape(-1)
+    if sample_ids.size != observation.shape[0]:
+        raise ValueError(
+            f"Expected {observation.shape[0]} sample IDs, got {sample_ids.size}."
+        )
+    if test_sample_checksum is None:
+        test_sample_checksum = hashlib.sha256(
+            "\n".join(sample_ids.tolist()).encode("utf-8")
+        ).hexdigest()
 
     if longitudes is not None:
         longitudes = _ensure_2d(longitudes).astype(np.float64)
@@ -543,6 +680,7 @@ def save_evaluation_results(
         longitudes,
         latitudes,
         seed,
+        sample_ids,
     )
 
     _write_csv(result_dir / "metrics_summary.csv", summary_rows)
@@ -559,6 +697,7 @@ def save_evaluation_results(
         observation=observation,
         ecmwf_s2s=ecmwf,
         lead_time=lead_times,
+        sample_id=sample_ids,
         longitude=np.array([]) if longitudes is None else longitudes,
         latitude=np.array([]) if latitudes is None else latitudes,
     )
@@ -578,8 +717,16 @@ def save_evaluation_results(
             "result_dir": str(result_dir),
             "n_test_samples": int(observation.shape[0]),
             "n_stations": int(observation.shape[1]),
+            "sample_id_source": sample_id_source,
+            "test_sample_checksum": test_sample_checksum,
+            "test_sample_ids": sample_ids.tolist(),
             "lead_times": sorted(float(value) for value in np.unique(lead_times)),
             "extreme_thresholds_mm_week": thresholds,
+            "postprocessing": {
+                "prediction_clip_mm_week": run_metadata.get("prediction_clip_mm_week") if run_metadata else None,
+                "observation_clip_mm_week": run_metadata.get("observation_clip_mm_week") if run_metadata else None,
+                "ecmwf_clip_mm_week": run_metadata.get("ecmwf_clip_mm_week") if run_metadata else None,
+            },
             "saved_at_utc": datetime.now(timezone.utc).isoformat(),
         }
     )
@@ -705,14 +852,14 @@ def aggregate_seed_results(experiment_dir):
         "per_station_metrics.csv",
         "aggregate_per_station.csv",
         ("forecast_source", "station_index", "station_id", "station_name", "longitude", "latitude"),
-        ("mae", "rmse", "r2", "r2_pooled", "corr", "bias"),
+        ("mae", "rmse", "r2_station", "corr", "bias"),
     )
     _aggregate_detail_files(
         experiment_dir,
         "per_lead_time_metrics.csv",
         "aggregate_per_lead_time.csv",
         ("forecast_source", "lead_time"),
-        ("mae", "rmse", "r2", "r2_pooled", "corr", "bias"),
+        ("mae", "rmse", "r2_pooled", "corr", "bias"),
     )
     _aggregate_detail_files(
         experiment_dir,
@@ -721,6 +868,32 @@ def aggregate_seed_results(experiment_dir):
         ("forecast_source", "threshold_label", "threshold_mm_week"),
         ("pod", "far", "csi", "frequency_bias"),
     )
+    _aggregate_detail_files(
+        experiment_dir,
+        "intensity_class_metrics.csv",
+        "aggregate_intensity_class_metrics.csv",
+        ("forecast_source", "intensity_class", "lower_mm_week", "upper_mm_week"),
+        ("mae", "rmse", "bias"),
+    )
+
+    manifest_rows = []
+    group_dir = experiment_dir.parent
+    for metadata_path in sorted(group_dir.glob("*/seed_*/run_metadata.json")):
+        with metadata_path.open("r", encoding="utf-8") as stream:
+            metadata = json.load(stream)
+        manifest_rows.append(
+            {
+                "experiment_name": metadata.get("experiment_name"),
+                "seed": metadata.get("seed"),
+                "model_name": metadata.get("model_name"),
+                "checkpoint_path": metadata.get("checkpoint_path"),
+                "test_sample_checksum": metadata.get("test_sample_checksum"),
+                "result_dir": metadata.get("result_dir"),
+                "saved_at_utc": metadata.get("saved_at_utc"),
+            }
+        )
+    if manifest_rows:
+        _write_csv(group_dir / "run_manifest.csv", manifest_rows)
     return str(experiment_dir / "aggregate_metrics.csv")
 
 
@@ -751,7 +924,30 @@ def compare_experiments(group_dir, experiment_a, experiment_b):
         ttest_rel = None
 
     comparison_rows = []
-    for metric_name in ("mae", "rmse", "r2", "r2_pooled", "corr", "bias"):
+    checksum_by_experiment = {}
+    for experiment in (experiment_a, experiment_b):
+        checksum_by_experiment[experiment] = {}
+        for seed in common_seeds:
+            metadata_path = group_dir / experiment / f"seed_{seed}" / "run_metadata.json"
+            if not metadata_path.exists():
+                raise ValueError(f"Missing paired-test metadata: {metadata_path}")
+            with metadata_path.open("r", encoding="utf-8") as stream:
+                metadata = json.load(stream)
+            checksum_by_experiment[experiment][seed] = metadata.get("test_sample_checksum")
+
+    mismatched = [
+        seed for seed in common_seeds
+        if not checksum_by_experiment[experiment_a][seed]
+        or checksum_by_experiment[experiment_a][seed]
+        != checksum_by_experiment[experiment_b][seed]
+    ]
+    if mismatched:
+        raise ValueError(
+            "Paired test refused because test sample checksums differ or are missing "
+            f"for seeds: {mismatched}"
+        )
+
+    for metric_name in ("mae", "rmse", "r2_station_mean", "r2_pooled", "corr", "bias"):
         values_a = np.asarray(
             [_as_float(rows_by_experiment[experiment_a][seed][metric_name]) for seed in common_seeds]
         )
@@ -786,7 +982,7 @@ def compare_experiments(group_dir, experiment_a, experiment_b):
 
 
 def _log_to_wandb(summary_rows, prediction, observation, ecmwf):
-    if not wandb.run:
+    if wandb is None or not wandb.run:
         return
     for row in summary_rows:
         source = row["forecast_source"]
@@ -844,7 +1040,25 @@ def test_func(
         collate_fn=utils.custom_collate_fn,
     )
 
+    def forward_batch(data):
+        input_data = data["x"].to(device)
+        lead_time = data["lead_time"].to(device)
+        h = data.get("h")
+        return (
+            model([input_data, lead_time, h.to(device)])
+            if h is not None
+            else model([input_data, lead_time])
+        )
+
     print("********** Starting testing process **********")
+    warmup_batches = max(0, int(os.getenv("VIFOS_WARMUP_BATCHES", "2")))
+    if warmup_batches:
+        print(f"Warming up model with {warmup_batches} batch(es) before timing.")
+        with torch.no_grad():
+            for warmup_data in itertools.islice(iter(test_dataloader), warmup_batches):
+                forward_batch(warmup_data)
+        if device.type == "cuda":
+            torch.cuda.synchronize(device)
     if device.type == "cuda":
         torch.cuda.reset_peak_memory_stats(device)
         torch.cuda.synchronize(device)
@@ -867,15 +1081,10 @@ def test_func(
             ecmwf = torch.sum(ecmwf, dim=1)
             ecmwf = torch.unsqueeze(ecmwf, dim=-1)
 
-            h = data.get("h")
             if device.type == "cuda":
                 torch.cuda.synchronize(device)
             forward_start = time.perf_counter()
-            y_prd = (
-                model([input_data, lead_time, h.to(device)])
-                if h is not None
-                else model([input_data, lead_time])
-            )
+            y_prd = forward_batch(data)
             if device.type == "cuda":
                 torch.cuda.synchronize(device)
             model_forward_seconds += time.perf_counter() - forward_start
@@ -909,11 +1118,26 @@ def test_func(
         if device.type == "cuda"
         else 0.0
     )
+    peak_gpu_reserved_memory_mb = (
+        torch.cuda.max_memory_reserved(device) / (1024**2)
+        if device.type == "cuda"
+        else 0.0
+    )
 
     list_prd = np.concatenate(list_prd, axis=0)
     list_grt = np.concatenate(list_grt, axis=0)
     list_ecmwf = np.concatenate(list_ecmwf, axis=0)
     lead_times = np.concatenate(list_lead_time, axis=0)
+    actual_lead_times = {int(value) for value in np.unique(lead_times)}
+    expected_lead_times = set(range(7, 47))
+    if actual_lead_times != expected_lead_times:
+        raise ValueError(
+            "Test lead-time set must be exactly 7..46; got "
+            f"{sorted(actual_lead_times)}"
+        )
+    sample_ids, sample_id_source, test_sample_checksum = _sample_ids_from_dataset(
+        test_dataset, len(list_grt)
+    )
     longitudes = np.concatenate(list_lon, axis=0) if list_lon else None
     latitudes = np.concatenate(list_lat, axis=0) if list_lat else None
 
@@ -928,6 +1152,17 @@ def test_func(
                 1000 * model_forward_seconds / len(list_grt)
             ),
             "test_peak_gpu_memory_mb": peak_gpu_memory_mb,
+            "test_peak_gpu_reserved_memory_mb": peak_gpu_reserved_memory_mb,
+            "test_samples": int(len(list_grt)),
+            "model_forward_samples_per_second": (
+                len(list_grt) / model_forward_seconds if model_forward_seconds else None
+            ),
+            "warmup_batches": warmup_batches,
+            "timing_method": "CUDA synchronized around each forward; warmup excluded",
+            "prediction_clip_mm_week": [0.0, float(config.DATA.RAIN_THRESHOLD)],
+            "observation_clip_mm_week": [0.0, float(config.DATA.RAIN_THRESHOLD)],
+            "ecmwf_clip_mm_week": [0.0, float(config.DATA.RAIN_THRESHOLD)],
+            "run_finished_at_utc": datetime.now(timezone.utc).isoformat(),
         }
     )
     if result_dir is None:
@@ -944,6 +1179,9 @@ def test_func(
         latitudes=latitudes,
         extreme_thresholds=extreme_thresholds,
         run_metadata=metadata,
+        sample_ids=sample_ids,
+        sample_id_source=sample_id_source,
+        test_sample_checksum=test_sample_checksum,
     )
     if config.WANDB.STATUS:
         _log_to_wandb(saved["summary"], list_prd, list_grt, list_ecmwf)
@@ -953,12 +1191,14 @@ def test_func(
     print(
         "Model - "
         f"MAE: {model_metrics['mae']:.4f}, RMSE: {model_metrics['rmse']:.4f}, "
-        f"R2: {model_metrics['r2']:.4f}, Corr: {model_metrics['corr']:.4f}"
+        f"R2(station mean): {model_metrics['r2_station_mean']:.4f}, "
+        f"R2(pooled): {model_metrics['r2_pooled']:.4f}, Corr: {model_metrics['corr']:.4f}"
     )
     print(
         "ECMWF S2S - "
         f"MAE: {s2s_metrics['mae']:.4f}, RMSE: {s2s_metrics['rmse']:.4f}, "
-        f"R2: {s2s_metrics['r2']:.4f}, Corr: {s2s_metrics['corr']:.4f}"
+        f"R2(station mean): {s2s_metrics['r2_station_mean']:.4f}, "
+        f"R2(pooled): {s2s_metrics['r2_pooled']:.4f}, Corr: {s2s_metrics['corr']:.4f}"
     )
     print(f"Saved test results to: {saved['result_dir']}")
     return saved
@@ -1076,6 +1316,15 @@ def test_func_quantile(
     observation = np.concatenate(list_grt, axis=0)
     ecmwf = np.concatenate(list_ecmwf, axis=0)
     lead_times = np.concatenate(list_lead_time, axis=0)
+    actual_lead_times = {int(value) for value in np.unique(lead_times)}
+    if actual_lead_times != set(range(7, 47)):
+        raise ValueError(
+            "Test lead-time set must be exactly 7..46; got "
+            f"{sorted(actual_lead_times)}"
+        )
+    sample_ids, sample_id_source, test_sample_checksum = _sample_ids_from_dataset(
+        test_dataset, len(observation)
+    )
     longitudes = np.concatenate(list_lon, axis=0) if list_lon else None
     latitudes = np.concatenate(list_lat, axis=0) if list_lat else None
     inference_seconds = time.perf_counter() - start_time
@@ -1101,6 +1350,9 @@ def test_func_quantile(
         latitudes=latitudes,
         extreme_thresholds=extreme_thresholds,
         run_metadata=metadata,
+        sample_ids=sample_ids,
+        sample_id_source=sample_id_source,
+        test_sample_checksum=test_sample_checksum,
     )
     if config.WANDB.STATUS:
         _log_to_wandb(saved["summary"], prediction, observation, ecmwf)

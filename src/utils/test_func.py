@@ -9,7 +9,10 @@ from sklearn.metrics import (
 )
 
 import torch.nn as nn
-import wandb
+try:
+    import wandb
+except ImportError:
+    wandb = None
 from torch.utils.data import DataLoader
 from tqdm import tqdm
 import numpy as np
@@ -392,4 +395,4 @@ def test_func_quantile(test_dataset, criterion, config, input_scaler, output_sca
     print(f"MSE: {mse} MAE:{mae} MAPE:{mape} RMSE:{rmse} R2:{r2} Corr:{corr_}")  
     print(f"MSE_ecm: {mse_ecm} MAE_ecm:{mae_ecm} MAPE_ecm:{mape_ecm} RMSE_ecm:{rmse_ecm} R2_ecm:{r2_ecm} Corr_ecm:{corr_ecm}")   
             
-    return 
+    return

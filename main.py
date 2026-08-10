@@ -2,7 +2,10 @@ import argparse
 import os
 import torch
 import torch.nn as nn
-import wandb
+try:
+    import wandb
+except ImportError:
+    wandb = None
 
 from torch.utils.data import DataLoader
 from src.model.baseline.unet import UNet
@@ -86,7 +89,10 @@ def create_checkpoint_dir(path):
 
 def init_wandb(config):
     if config.WANDB.STATUS:
-        wandb.login(key='960dec1c23ffe487b2ecb98ffc097cf118d94c19')
+        if wandb is None:
+            raise RuntimeError("W&B is enabled but the 'wandb' package is not installed.")
+        # Use WANDB_API_KEY or an existing local login. Never keep credentials
+        # in source control or evaluation metadata.
         wandb.init(
             entity="aiotlab",
             project="SubSeasonalForecasting",
@@ -167,4 +173,15 @@ def main():
     
 
 if __name__ == "__main__":
-    main()
+    evaluation_mode = any(
+        os.getenv(name, "").strip().lower() in {"1", "true", "yes", "on"}
+        for name in ("VIFOS_TEST_ONLY", "VIFOS_COMPUTE_THRESHOLDS_ONLY")
+    )
+    if evaluation_mode:
+        # Keep the historical training path unchanged unless an explicit
+        # evaluation switch is present.
+        from main_test import main as evaluation_main
+
+        evaluation_main()
+    else:
+        main()

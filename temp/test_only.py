@@ -111,7 +111,7 @@ if __name__ == "__main__":
     
     # Init wandb session
     if not args.debug:
-        wandb.login(key='ea35e57e56b147a6ec766aed718fb2479086f2fb')
+        wandb.login()
         wandb.init(
             entity="aiotlab",
             project="SubSeasonalForecasting",

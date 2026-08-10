@@ -22,18 +22,26 @@ VIFOS_COMPARE_WITH
 import os
 import re
 import time
+import hashlib
+import json
+import platform
+import subprocess
 from datetime import datetime, timezone
 from pathlib import Path
 
 import torch
 import torch.nn as nn
-import wandb
+try:
+    import wandb
+except ImportError:
+    wandb = None
 
 from src.model import model_2head, models
 from src.model.baseline import cnn_lstm, conv_lstm
 from src.model.baseline.unet import UNet
-from src.utils import get_scaler, test_func, train_func, utils
+from src.utils import get_scaler, test_func_only as test_func, train_func, utils
 from src.utils.dataloader import CustomDataset3
+from src.utils.evaluation_io import require_checkpoint, resolve_checkpoint_path
 from src.utils.get_option import get_option
 from src.utils.get_session_name import get_session_name
 from src.utils.loss import (
@@ -120,6 +128,8 @@ def create_checkpoint_dir(path):
 def init_wandb(config):
     if not config.WANDB.STATUS:
         return
+    if wandb is None:
+        raise RuntimeError("W&B is enabled but the 'wandb' package is not installed.")
     # Authentication is read from WANDB_API_KEY or the user's existing W&B
     # login.  Do not commit an API key in source code.
     wandb.init(
@@ -143,6 +153,60 @@ def _is_enabled(environment_name):
         "yes",
         "on",
     }
+
+
+def _sha256(path, chunk_size=1024 * 1024):
+    path = Path(path)
+    digest = hashlib.sha256()
+    with path.open("rb") as stream:
+        for chunk in iter(lambda: stream.read(chunk_size), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def _resolve_checkpoint_path(config):
+    """Backward-compatible local alias used by existing callers/tests."""
+    return resolve_checkpoint_path(config)
+
+
+def _require_checkpoint(config, context="VIFOS_TEST_ONLY=1"):
+    return require_checkpoint(config, context=context)
+
+
+def _git_metadata():
+    command_prefix = ["git", "-c", "safe.directory=C:/Study/Lab/SF"]
+    try:
+        commit = subprocess.run(
+            command_prefix + ["rev-parse", "HEAD"],
+            check=True,
+            capture_output=True,
+            text=True,
+        ).stdout.strip()
+        status = subprocess.run(
+            command_prefix + ["status", "--short"],
+            check=True,
+            capture_output=True,
+            text=True,
+        ).stdout.strip()
+        return {"git_commit": commit, "git_dirty": bool(status), "git_status": status}
+    except (OSError, subprocess.CalledProcessError) as error:
+        return {"git_commit": None, "git_dirty": None, "git_error": str(error)}
+
+
+def _namespace_to_dict(value):
+    if hasattr(value, "items"):
+        return {str(key): _namespace_to_dict(item) for key, item in value.items()}
+    if hasattr(value, "__dict__"):
+        return {
+            str(key): _namespace_to_dict(item)
+            for key, item in vars(value).items()
+            if not str(key).startswith("_")
+        }
+    if isinstance(value, (list, tuple)):
+        return [_namespace_to_dict(item) for item in value]
+    if isinstance(value, torch.device):
+        return str(value)
+    return value
 
 
 def _experiment_layout(config):
@@ -178,9 +242,13 @@ def _save_config_snapshot(config, result_dir):
     result_dir = Path(result_dir)
     result_dir.mkdir(parents=True, exist_ok=True)
     try:
-        content = config.dump()
-    except (AttributeError, TypeError):
-        content = str(config)
+        import yaml
+
+        content = yaml.safe_dump(
+            _namespace_to_dict(config), sort_keys=False, allow_unicode=True
+        )
+    except (ImportError, TypeError):
+        content = json.dumps(_namespace_to_dict(config), indent=2, default=str)
     with (result_dir / "config.yaml").open("w", encoding="utf-8") as stream:
         stream.write(content)
         if not content.endswith("\n"):
@@ -207,6 +275,10 @@ def _synchronize(device):
 def main():
     _args, config = get_option()
     config.WANDB.SESSION_NAME = get_session_name(config)
+    test_only = _is_enabled("VIFOS_TEST_ONLY")
+    thresholds_only = _is_enabled("VIFOS_COMPUTE_THRESHOLDS_ONLY")
+    if (test_only or thresholds_only) and not _is_enabled("VIFOS_ENABLE_WANDB"):
+        config.WANDB.STATUS = False
     device = get_device()
     config.DEVICE = device
     seed = int(config.MODEL.SEED)
@@ -219,34 +291,27 @@ def main():
         result_dir,
         experiment_name,
     ) = _experiment_layout(config)
-    result_dir.mkdir(parents=True, exist_ok=True)
-
-    print("*************** Get scaler ***************")
-    input_scaler, esp_scaler, output_scaler = get_scaler.get_scaler(config)
-
-    print("*************** Init dataset ***************")
-    train_dataset = CustomDataset3(
-        mode="train",
-        config=config,
-        ecmwf_scaler=input_scaler,
-        esp_scaler=esp_scaler,
-        output_scaler=output_scaler,
-        shuffle=True,
-    )
-    valid_dataset = CustomDataset3(
-        mode="valid",
-        config=config,
-        ecmwf_scaler=input_scaler,
-        esp_scaler=esp_scaler,
-        output_scaler=output_scaler,
-    )
-    test_dataset = CustomDataset3(
-        mode="test",
-        config=config,
-        ecmwf_scaler=input_scaler,
-        esp_scaler=esp_scaler,
-        output_scaler=output_scaler,
-    )
+    if _is_enabled("VIFOS_DRY_RUN"):
+        checkpoint_path, candidates = _resolve_checkpoint_path(config)
+        print(
+            "DRY_RUN test-only: "
+            f"experiment={experiment_name} model={config.MODEL.NAME} seed={seed} "
+            f"data_idx_dir={config.DATA.DATA_IDX_DIR} checkpoint={checkpoint_path}"
+        )
+        print("Checkpoint candidates: " + " | ".join(str(path) for path in candidates))
+        return
+    if _is_enabled("VIFOS_PREFLIGHT_ONLY"):
+        checkpoint_path, candidates = _require_checkpoint(
+            config, context="Preflight requested"
+        )
+        print(f"PREFLIGHT_OK seed={seed} checkpoint={checkpoint_path}")
+        return
+    completion_marker = result_dir / "run_metadata.json"
+    if test_only and completion_marker.exists() and not _is_enabled("VIFOS_FORCE"):
+        raise FileExistsError(
+            f"Completed output already exists: {completion_marker}. "
+            "Set VIFOS_FORCE=1 to overwrite it explicitly."
+        )
 
     threshold_file = Path(
         os.getenv(
@@ -254,16 +319,34 @@ def main():
             str(result_root / "thresholds" / "train_rainfall_percentiles.json"),
         )
     )
-    if _is_enabled("VIFOS_COMPUTE_THRESHOLDS_ONLY"):
-        thresholds = test_func.compute_training_percentiles(
-            train_dataset=train_dataset,
-            config=config,
-            output_scaler=output_scaler,
-            output_path=threshold_file,
+    if thresholds_only:
+        thresholds = test_func.compute_training_percentiles_from_files(
+            config=config, output_path=threshold_file
         )
         print(f"Training rainfall percentiles: {thresholds}")
         print(f"Saved thresholds to: {threshold_file}")
         return
+
+    print("*************** Get scaler ***************")
+    input_scaler, esp_scaler, output_scaler = get_scaler.get_scaler(config)
+
+    print("*************** Init dataset ***************")
+    train_dataset = valid_dataset = test_dataset = None
+    if thresholds_only or not test_only:
+        train_dataset = CustomDataset3(
+            mode="train", config=config, ecmwf_scaler=input_scaler,
+            esp_scaler=esp_scaler, output_scaler=output_scaler, shuffle=True,
+        )
+    if not thresholds_only and not test_only:
+        valid_dataset = CustomDataset3(
+            mode="valid", config=config, ecmwf_scaler=input_scaler,
+            esp_scaler=esp_scaler, output_scaler=output_scaler,
+        )
+    if not thresholds_only:
+        test_dataset = CustomDataset3(
+            mode="test", config=config, ecmwf_scaler=input_scaler,
+            esp_scaler=esp_scaler, output_scaler=output_scaler,
+        )
 
     manual_thresholds = _parse_manual_thresholds(
         os.getenv("VIFOS_EXTREME_THRESHOLDS", "")
@@ -290,8 +373,22 @@ def main():
         "optimizer": str(config.OPTIMIZER.NAME),
         "loss": str(config.LOSS.NAME),
         "device": str(device),
+        "python_version": platform.python_version(),
+        "pytorch_version": torch.__version__,
+        "cuda_version": torch.version.cuda,
+        "gpu_name": torch.cuda.get_device_name(device) if device.type == "cuda" else None,
+        "batch_size": int(config.TRAIN.BATCH_SIZE),
+        "data_index_dir": str(config.DATA.DATA_IDX_DIR),
+        "test_index_path": str(Path(config.DATA.DATA_IDX_DIR) / "test.csv"),
+        "test_index_sha256": (
+            _sha256(Path(config.DATA.DATA_IDX_DIR) / "test.csv")
+            if (Path(config.DATA.DATA_IDX_DIR) / "test.csv").is_file()
+            else None
+        ),
+        "data_split_policy": "identical_train_valid_test_csv_across_seeds_52_62_72_82_92",
         "threshold_file": str(threshold_file),
         "run_started_at_utc": datetime.now(timezone.utc).isoformat(),
+        **_git_metadata(),
     }
     _save_config_snapshot(config, result_dir)
 
@@ -310,14 +407,15 @@ def main():
             extreme_thresholds=extreme_thresholds,
         )
         test_func.aggregate_seed_results(experiment_dir)
-        if config.WANDB.STATUS and wandb.run:
+        if config.WANDB.STATUS and wandb is not None and wandb.run:
             wandb.finish()
         print(f"Completed quantile-mapping run: {saved['result_dir']}")
         return
 
-    checkpoint_dir = Path("saved_checkpoints") / config.WANDB.GROUP_NAME / "checkpoint"
-    create_checkpoint_dir(checkpoint_dir)
-    checkpoint_path = checkpoint_dir / f"{config.WANDB.SESSION_NAME}.pt"
+    checkpoint_path, checkpoint_candidates = _resolve_checkpoint_path(config)
+    checkpoint_dir = checkpoint_path.parent
+    if not test_only:
+        create_checkpoint_dir(checkpoint_dir)
     early_stopping = utils.EarlyStopping(
         patience=config.EARLY_STOPPING.PATIANCE,
         verbose=True,
@@ -351,15 +449,11 @@ def main():
         raise ValueError(f"Wrong optimizer name: {config.OPTIMIZER.NAME}")
 
     init_wandb(config)
-    test_only = _is_enabled("VIFOS_TEST_ONLY")
     if test_only:
-        if not checkpoint_path.exists():
-            raise FileNotFoundError(
-                f"VIFOS_TEST_ONLY=1 but checkpoint was not found: {checkpoint_path}"
-            )
+        checkpoint_path, checkpoint_candidates = _require_checkpoint(config)
         results = {"test_only": True}
-        training_seconds = 0.0
-        training_peak_gpu_memory_mb = 0.0
+        training_seconds = None
+        training_peak_gpu_memory_mb = None
         print(f"Skipping training; using checkpoint: {checkpoint_path}")
     else:
         if device.type == "cuda":
@@ -391,10 +485,15 @@ def main():
     run_metadata = {
         **base_metadata,
         "checkpoint_path": str(checkpoint_path),
+        "checkpoint_sha256": _sha256(checkpoint_path),
+        "checkpoint_size_bytes": checkpoint_path.stat().st_size,
         "total_parameters": total_params,
         "trainable_parameters": trainable_params_count,
         "training_seconds": training_seconds,
         "training_peak_gpu_memory_mb": training_peak_gpu_memory_mb,
+        "training_timing_note": (
+            "not_available_from_test_only" if test_only else "measured_in_current_training_run"
+        ),
         "test_only": test_only,
         "train_results": numeric_results,
     }
@@ -426,8 +525,8 @@ def main():
     if compare_with:
         comparison_path = test_func.compare_experiments(
             group_dir,
-            experiment_name,
             _slug(compare_with),
+            experiment_name,
         )
         if comparison_path:
             print(f"Updated paired comparison: {comparison_path}")
@@ -437,7 +536,7 @@ def main():
                 "at least two matching seeds."
             )
 
-    if config.WANDB.STATUS and wandb.run:
+    if config.WANDB.STATUS and wandb is not None and wandb.run:
         wandb.finish()
     print(f"Completed experiment run: {saved['result_dir']}")
 

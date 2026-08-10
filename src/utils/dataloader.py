@@ -310,6 +310,18 @@ class CustomDataset3(Dataset):
 
         # Index
         self.idx_df = pd.read_csv(f'{config.DATA.DATA_IDX_DIR}/{mode}.csv').values
+        # The index CSVs were created on another machine and contain absolute
+        # path prefixes. Resolve only their basenames under the configured
+        # portable roots; this preserves the exact indexed files while allowing
+        # evaluation on a different filesystem layout.
+        self.idx_df[:, 0] = [
+            os.path.join(config.DATA.NPYARR_DIR, os.path.basename(str(path)))
+            for path in self.idx_df[:, 0]
+        ]
+        self.idx_df[:, 1] = [
+            os.path.join(config.DATA.ESP_DATA_PATH, os.path.basename(str(path)))
+            for path in self.idx_df[:, 1]
+        ]
         if self.shuffle:
             np.random.shuffle(self.idx_df)
 

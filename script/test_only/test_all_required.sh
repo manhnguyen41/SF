@@ -30,6 +30,13 @@
 set -Eeuo pipefail
 
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+ENV_FILE="${VIFOS_ENV_FILE:-$SCRIPT_DIR/evaluation_paths.sh}"
+if [[ -f "$ENV_FILE" ]]; then
+  # shellcheck source=/dev/null
+  source "$ENV_FILE"
+fi
+PROJECT_ROOT="$(cd -- "$SCRIPT_DIR/../.." && pwd)"
+cd "$PROJECT_ROOT"
 RUN_ONE="$SCRIPT_DIR/test_one_experiment.sh"
 THRESHOLD_RUNNER="$SCRIPT_DIR/compute_thresholds.sh"
 
@@ -40,12 +47,12 @@ fi
 
 if (($# == 0)); then
   SPECS=(
-    "full_vifos=./fullvifos.sh"
-    "cnn_lstm=./cnn_lstm.sh"
-    "without_gsmap=./without_gsmap.sh"
-    "without_lead_time_embedding=./without_lead_time_embedding.sh"
-    "spatial_temporal_embedding=./spatial_temporal_embedding.sh"
-    "no_pretrain=./no_pretrain.sh"
+    "full_vifos=script/round1/fullvifos.sh"
+    "cnn_lstm=script/round1/cnn-lstm.sh"
+    "without_gsmap=script/round1/no-gsmap.sh"
+    "without_lead_time_embedding=script/round1/no-ltembedding.sh"
+    "spatial_temporal_embedding=script/round1/spatial-temporal.sh"
+    "no_pretrain=script/round1/no-pretrain.sh"
   )
 else
   SPECS=("$@")
@@ -91,6 +98,26 @@ if ((missing)); then
   echo "Pass the real mappings as command-line arguments; no tests were started." >&2
   exit 2
 fi
+
+if [[ "${DRY_RUN:-0}" == "1" ]]; then
+  if [[ "${SKIP_THRESHOLDS:-0}" != "1" ]]; then
+    echo "DRY_RUN thresholds training_bash=$FULL_VIFOS_BASH reference_seed=92"
+  fi
+  for index in "${!EXPERIMENT_NAMES[@]}"; do
+    for seed in 52 62 72 82 92; do
+      echo "DRY_RUN test experiment=${EXPERIMENT_NAMES[$index]} seed=$seed training_bash=${TRAINING_SCRIPTS[$index]}"
+    done
+  done
+  echo "DRY_RUN planned_test_count=30"
+  exit 0
+fi
+
+# Resolve all 30 checkpoint paths before touching thresholds or results.
+echo "Preflighting all required checkpoints..."
+for index in "${!EXPERIMENT_NAMES[@]}"; do
+  PREFLIGHT_ONLY=1 bash "$RUN_ONE" \
+    "${EXPERIMENT_NAMES[$index]}" "${TRAINING_SCRIPTS[$index]}"
+done
 
 if [[ "${SKIP_THRESHOLDS:-0}" != "1" ]]; then
   bash "$THRESHOLD_RUNNER" "$FULL_VIFOS_BASH"
