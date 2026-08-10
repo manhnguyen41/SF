@@ -76,6 +76,8 @@ export VIFOS_PREFLIGHT_ONLY="${PREFLIGHT_ONLY:-0}"
 export VIFOS_RESULTS_DIR="${RESULTS_DIR:-experiment_results}"
 export VIFOS_THRESHOLDS_FILE="${THRESHOLDS_FILE:-${VIFOS_RESULTS_DIR}/thresholds/train_rainfall_percentiles.json}"
 export GPU_ID="${GPU_ID:-0}"
+export SKIP_MISSING_CHECKPOINTS="${SKIP_MISSING_CHECKPOINTS:-${INCREMENTAL:-0}}"
+export VIFOS_SKIP_EXISTING_RESULTS="${VIFOS_SKIP_EXISTING_RESULTS:-${INCREMENTAL:-0}}"
 unset VIFOS_COMPUTE_THRESHOLDS_ONLY
 
 if [[ "$VIFOS_DRY_RUN" != "1" ]]; then
@@ -127,6 +129,40 @@ if [[ -n "$COMPARE_EXPERIMENT" ]]; then
   echo "Paired comparison    : $COMPARE_EXPERIMENT"
 fi
 echo "============================================================"
+
+if [[ "$SKIP_MISSING_CHECKPOINTS" == "1" ]]; then
+  available_seeds=()
+  read -r -a candidate_seeds <<<"$SEEDS_OVERRIDE"
+  echo "Incremental checkpoint probe: ${candidate_seeds[*]}"
+  for seed in "${candidate_seeds[@]}"; do
+    if probe_output=$(
+      SEEDS_OVERRIDE="$seed" \
+      VIFOS_PREFLIGHT_ONLY=1 \
+      VIFOS_DRY_RUN=0 \
+      bash "$TRAINING_BASH" 2>&1
+    ); then
+      available_seeds+=("$seed")
+      echo "  AVAILABLE seed=$seed"
+    else
+      echo "  SKIP missing checkpoint: experiment=$EXPERIMENT_NAME seed=$seed"
+      if [[ "${PREFLIGHT_VERBOSE:-0}" == "1" ]]; then
+        printf '%s\n' "$probe_output" >&2
+      fi
+    fi
+  done
+
+  if ((${#available_seeds[@]} == 0)); then
+    echo "SKIP experiment=$EXPERIMENT_NAME: no checkpoint is available yet."
+    exit 0
+  fi
+
+  export SEEDS_OVERRIDE="${available_seeds[*]}"
+  echo "Available seeds       : $SEEDS_OVERRIDE"
+  if [[ "$VIFOS_PREFLIGHT_ONLY" == "1" ]]; then
+    exit 0
+  fi
+  export VIFOS_PREFLIGHT_ONLY=0
+fi
 
 if [[ "$VIFOS_DRY_RUN" == "1" ]]; then
   bash -x "$TRAINING_BASH"

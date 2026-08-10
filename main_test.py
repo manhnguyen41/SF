@@ -308,9 +308,13 @@ def main():
         return
     completion_marker = result_dir / "run_metadata.json"
     if test_only and completion_marker.exists() and not _is_enabled("VIFOS_FORCE"):
+        if _is_enabled("VIFOS_SKIP_EXISTING_RESULTS"):
+            print(f"SKIP existing completed result: {completion_marker}")
+            return
         raise FileExistsError(
             f"Completed output already exists: {completion_marker}. "
-            "Set VIFOS_FORCE=1 to overwrite it explicitly."
+            "Set VIFOS_SKIP_EXISTING_RESULTS=1 to skip it or VIFOS_FORCE=1 "
+            "to overwrite it explicitly."
         )
 
     threshold_file = Path(
