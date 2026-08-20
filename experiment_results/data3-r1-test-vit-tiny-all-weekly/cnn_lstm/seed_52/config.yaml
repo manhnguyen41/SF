@@ -96,6 +96,6 @@ LRS:
 WANDB:
   STATUS: false
   GROUP_NAME: data3-r1-test-vit-tiny-all-weekly
-  SESSION_NAME: BATCH_32_Add_type_0data3-r1-test-vit-tiny-all-weekly_CNN-LSTM_PS-3_Lr-5e-05_LF-weightedmse-wfn_abs_DR-0.25_LN-True-ST_0_3-ON_True_Seed-52_LRS-TrueGSMAP_time_step7ECMWF_time_step7_ReduceLROnPlateau-min-0.5-3VIT_Blocks_2
+  SESSION_NAME: BATCH_16_Add_type_0data3-r1-test-vit-tiny-all-weekly_CNN-LSTM_PS-3_Lr-5e-05_LF-weightedmse-wfn_abs_DR-0.25_LN-True-ST_0_3-ON_True_Seed-52_LRS-TrueGSMAP_time_step7ECMWF_time_step7_ReduceLROnPlateau-min-0.5-3VIT_Blocks_2
 DEBUG: true
 DEVICE: cuda

@@ -89,10 +89,7 @@ def create_checkpoint_dir(path):
 
 def init_wandb(config):
     if config.WANDB.STATUS:
-        if wandb is None:
-            raise RuntimeError("W&B is enabled but the 'wandb' package is not installed.")
-        # Use WANDB_API_KEY or an existing local login. Never keep credentials
-        # in source control or evaluation metadata.
+        wandb.login(key='960dec1c23ffe487b2ecb98ffc097cf118d94c19')
         wandb.init(
             entity="aiotlab",
             project="SubSeasonalForecasting",
