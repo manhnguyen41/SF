@@ -7,7 +7,7 @@ NUMBLOCK=(2)
 GSMAP_TIME_STEPS=(7)
 ECMWF_TIME_STEPS=(7)
 PATCH=(3)
-if [[ -n "${SEEDS_OVERRIDE:-}" ]]; then read -r -a SEEDS <<<"$SEEDS_OVERRIDE"; else SEEDS=(52 62 72 82 92); fi
+if [[ -n "${SEEDS_OVERRIDE:-}" ]]; then read -r -a SEEDS <<<"$SEEDS_OVERRIDE"; else SEEDS=(62 72 82 92); fi
 for gsmap in "${GSMAP_TIME_STEPS[@]}"; do
   for ecmwf in "${ECMWF_TIME_STEPS[@]}"; do
     for bs in "${BATCH_SIZES[@]}"; do
