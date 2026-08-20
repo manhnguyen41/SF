@@ -276,6 +276,12 @@ def main():
     _args, config = get_option()
     trained_batch_size = int(config.TRAIN.BATCH_SIZE)
     config.WANDB.SESSION_NAME = get_session_name(config)
+    session_name_override = os.getenv("VIFOS_SESSION_NAME_OVERRIDE", "").strip()
+    if session_name_override:
+        session_name_override = Path(session_name_override).name
+        if session_name_override.endswith(".pt"):
+            session_name_override = session_name_override[:-3]
+        config.WANDB.SESSION_NAME = session_name_override
     evaluation_batch_size = int(
         os.getenv("VIFOS_EVAL_BATCH_SIZE", str(trained_batch_size))
     )

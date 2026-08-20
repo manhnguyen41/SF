@@ -11,8 +11,16 @@ import numpy as np
 from torch.optim.lr_scheduler import CosineAnnealingLR, ReduceLROnPlateau
 from src.utils.loss import get_station_from_grid
 from src.utils import utils
-import copy
 import torch.nn.functional as F
+
+
+def snapshot_state_dict(state_dict):
+    """Return an independent CPU snapshot suitable for a best-model checkpoint."""
+    return {
+        key: value.detach().cpu().clone()
+        for key, value in state_dict.items()
+    }
+
 
 def load_checkpoint(model, checkpoint_path, device):
     """Load the model checkpoint from file."""
@@ -157,6 +165,7 @@ def train_func(model, train_dataset, valid_dataset, early_stopping, loss_func, o
     best_valid_loss = float('inf')
     best_model_state = None
     results = {'train_losses': [], 'valid_losses': [], 'learning_rates': []}
+    checkpoint = None
 
     if os.path.exists(checkpoint_path):
         print(f"Checkpoint found at {checkpoint_path}, loading model...")
@@ -164,8 +173,8 @@ def train_func(model, train_dataset, valid_dataset, early_stopping, loss_func, o
         checkpoint = torch.load(checkpoint_path, map_location=device)
         if "optimizer" in checkpoint:
             optimizer.load_state_dict(checkpoint["optimizer"])
-        if "scheduler" in checkpoint and config.LRS.USE_LRS:
-            scheduler.load_state_dict(checkpoint["scheduler"])
+        if checkpoint.get("best_dict") is not None:
+            best_model_state = snapshot_state_dict(checkpoint["best_dict"])
         start_epoch = checkpoint.get("epoch", 0) + 1
         best_valid_loss = checkpoint.get("best_valid_loss", float('inf'))
         results = checkpoint.get("results", results)
@@ -191,6 +200,8 @@ def train_func(model, train_dataset, valid_dataset, early_stopping, loss_func, o
             )
         else:
             raise ValueError(f"Unsupported scheduler type: {config.LRS.NAME}. Choose 'CosineAnnealingLR' or 'ReduceLROnPlateau'")
+    if checkpoint is not None and scheduler is not None and checkpoint.get("scheduler") is not None:
+        scheduler.load_state_dict(checkpoint["scheduler"])
 
     train_generator = torch.Generator()
     train_generator.manual_seed(int(config.MODEL.SEED))
@@ -247,10 +258,10 @@ def train_func(model, train_dataset, valid_dataset, early_stopping, loss_func, o
             
             if valid_epoch_loss < best_valid_loss:
                 best_valid_loss = valid_epoch_loss
-                best_model_state = {k: v.to(device) for k, v in model.state_dict().items()}
+                best_model_state = snapshot_state_dict(model.state_dict())
                 # Save checkpoint
             torch.save({
-                    "model_dict": {k: v.to(device) for k, v in model.state_dict().items()},
+                    "model_dict": model.state_dict(),
                     "best_dict": best_model_state,
                     "optimizer": optimizer.state_dict(),
                     "scheduler": scheduler.state_dict() if scheduler is not None else None,
@@ -323,6 +334,8 @@ def train_func_unsupervised(model,
             model.load_state_dict(ck.get("model_state_dict", ck))
         if "optimizer" in ck:
             optimizer.load_state_dict(ck["optimizer"])
+        if ck.get("best_dict") is not None:
+            best_model_state = snapshot_state_dict(ck["best_dict"])
         start_epoch = ck.get("epoch", 0) + 1
         best_valid_loss = ck.get("best_valid_loss", best_valid_loss)
         results = ck.get("results", results)
@@ -504,7 +517,12 @@ def train_func_unsupervised(model,
                 scheduler.step(valid_epoch_loss)
 
         early_stopping(valid_epoch_loss, model)
-        
+
+        is_best = valid_epoch_loss < best_valid_loss
+        if is_best:
+            best_valid_loss = valid_epoch_loss
+            best_model_state = snapshot_state_dict(model.state_dict())
+
         torch.save({
             "model_dict": model.state_dict(),
             "best_dict": best_model_state,
@@ -514,9 +532,7 @@ def train_func_unsupervised(model,
             "results": results
         }, checkpoint_path)
 
-        if valid_epoch_loss < best_valid_loss:
-            best_valid_loss = valid_epoch_loss
-            best_model_state = copy.deepcopy(model.state_dict())
+        if is_best:
             torch.save(model.vit_blocks.state_dict(), "vit/vit_blocks_only.pth") 
             torch.save({
                 "model_dict": model.state_dict(),
@@ -566,6 +582,7 @@ def train_func_2head(model, train_dataset, valid_dataset, early_stopping, loss_f
     best_valid_loss = float('inf')
     best_model_state = None
     results = {'train_losses': [], 'valid_losses': [], 'learning_rates': []}
+    checkpoint = None
 
     if os.path.exists(checkpoint_path):
         print(f"Checkpoint found at {checkpoint_path}, loading model...")
@@ -573,8 +590,8 @@ def train_func_2head(model, train_dataset, valid_dataset, early_stopping, loss_f
         checkpoint = torch.load(checkpoint_path, map_location=device)
         if "optimizer" in checkpoint:
             optimizer.load_state_dict(checkpoint["optimizer"])
-        if "scheduler" in checkpoint and config.LRS.USE_LRS:
-            scheduler.load_state_dict(checkpoint["scheduler"])
+        if checkpoint.get("best_dict") is not None:
+            best_model_state = snapshot_state_dict(checkpoint["best_dict"])
         start_epoch = checkpoint.get("epoch", 0) + 1
         best_valid_loss = checkpoint.get("best_valid_loss", float('inf'))
         results = checkpoint.get("results", results)
@@ -600,6 +617,8 @@ def train_func_2head(model, train_dataset, valid_dataset, early_stopping, loss_f
             )
         else:
             raise ValueError(f"Unsupported scheduler type: {config.LRS.NAME}. Choose 'CosineAnnealingLR' or 'ReduceLROnPlateau'")
+    if checkpoint is not None and scheduler is not None and checkpoint.get("scheduler") is not None:
+        scheduler.load_state_dict(checkpoint["scheduler"])
 
     train_generator = torch.Generator()
     train_generator.manual_seed(int(config.MODEL.SEED))
@@ -663,10 +682,10 @@ def train_func_2head(model, train_dataset, valid_dataset, early_stopping, loss_f
             
             if valid_epoch_loss < best_valid_loss:
                 best_valid_loss = valid_epoch_loss
-                best_model_state = {k: v.to(device) for k, v in model.state_dict().items()}
+                best_model_state = snapshot_state_dict(model.state_dict())
                 # Save checkpoint
             torch.save({
-                    "model_dict": {k: v.to(device) for k, v in model.state_dict().items()},
+                    "model_dict": model.state_dict(),
                     "best_dict": best_model_state,
                     "optimizer": optimizer.state_dict(),
                     "scheduler": scheduler.state_dict() if scheduler is not None else None,
@@ -724,6 +743,7 @@ def train_func_2head_phase_2(model, train_dataset, valid_dataset, early_stopping
     best_valid_loss = float('inf')
     best_model_state = None
     results = {'train_losses': [], 'valid_losses': [], 'learning_rates': []}
+    checkpoint = None
 
     if os.path.exists(checkpoint_path):
         print(f"Checkpoint found at {checkpoint_path}, loading model...")
@@ -731,8 +751,8 @@ def train_func_2head_phase_2(model, train_dataset, valid_dataset, early_stopping
         checkpoint = torch.load(checkpoint_path, map_location=device)
         if "optimizer" in checkpoint:
             optimizer.load_state_dict(checkpoint["optimizer"])
-        if "scheduler" in checkpoint and config.LRS.USE_LRS:
-            scheduler.load_state_dict(checkpoint["scheduler"])
+        if checkpoint.get("best_dict") is not None:
+            best_model_state = snapshot_state_dict(checkpoint["best_dict"])
         start_epoch = checkpoint.get("epoch", 0) + 1
         best_valid_loss = checkpoint.get("best_valid_loss", float('inf'))
         results = checkpoint.get("results", results)
@@ -758,6 +778,8 @@ def train_func_2head_phase_2(model, train_dataset, valid_dataset, early_stopping
             )
         else:
             raise ValueError(f"Unsupported scheduler type: {config.LRS.NAME}. Choose 'CosineAnnealingLR' or 'ReduceLROnPlateau'")
+    if checkpoint is not None and scheduler is not None and checkpoint.get("scheduler") is not None:
+        scheduler.load_state_dict(checkpoint["scheduler"])
 
     train_generator = torch.Generator()
     train_generator.manual_seed(int(config.MODEL.SEED))
@@ -842,10 +864,10 @@ def train_func_2head_phase_2(model, train_dataset, valid_dataset, early_stopping
             
             if valid_epoch_loss < best_valid_loss:
                 best_valid_loss = valid_epoch_loss
-                best_model_state = {k: v.to(device) for k, v in model.state_dict().items()}
+                best_model_state = snapshot_state_dict(model.state_dict())
                 # Save checkpoint
             torch.save({
-                    "model_dict": {k: v.to(device) for k, v in model.state_dict().items()},
+                    "model_dict": model.state_dict(),
                     "best_dict": best_model_state,
                     "optimizer": optimizer.state_dict(),
                     "scheduler": scheduler.state_dict() if scheduler is not None else None,
