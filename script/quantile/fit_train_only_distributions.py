@@ -37,6 +37,31 @@ def resolve_ecmwf_path(recorded_path, ecmwf_root):
     )
 
 
+def assemble_base_dates(train):
+    """Match CustomDataset3's fallback for invalid dates such as non-leap Feb 29."""
+    base_dates = pd.to_datetime(
+        {"year": train["year"], "month": train["month"], "day": train["day"]},
+        errors="coerce",
+    )
+    invalid = base_dates.isna()
+    if invalid.any():
+        invalid_month_day = train.loc[invalid, ["month", "day"]].drop_duplicates()
+        if not ((invalid_month_day["month"] == 2) & (invalid_month_day["day"] == 29)).all():
+            raise ValueError(
+                "Invalid train dates other than February 29 were found: "
+                f"{invalid_month_day.to_dict(orient='records')}"
+            )
+        fallback = pd.to_datetime(
+            {
+                "year": train.loc[invalid, "year"],
+                "month": 2,
+                "day": 28,
+            }
+        )
+        base_dates.loc[invalid] = fallback.to_numpy()
+    return base_dates, invalid
+
+
 def prepare_output(root, overwrite):
     root = Path(root)
     grid_dir = root / "s2s"
@@ -70,14 +95,18 @@ def fit_grid_distributions(train, args, levels, grid_dir):
         for row in group.itertuples(index=False):
             year_index = int(row.year) - args.year_origin
             lead = int(row.leadTime)
-            start = lead - args.window_days + 1
-            stop = lead + 1
+            # Match CustomDataset3.get_ecmwf exactly: [lead-window, lead).
+            start = lead - args.window_days
+            stop = lead
             if year_index < 0 or year_index >= array.shape[0]:
                 raise IndexError(f"Year {row.year} is outside {path} with shape {array.shape}")
             if start < 0 or stop > array.shape[2]:
                 raise IndexError(f"Lead {lead} cannot form a {args.window_days}-day window in {path}")
-            samples[cursor] = np.asarray(
+            daily_precipitation = np.asarray(
                 array[year_index, args.precip_feature_index, start:stop], dtype=np.float32
+            )
+            samples[cursor] = np.clip(
+                daily_precipitation, 0, args.rain_threshold
             ).sum(axis=0)
             cursor += 1
 
@@ -104,7 +133,11 @@ def fit_gauge_distributions(train, args, levels, gauge_dir):
     if not required.issubset(gauge.columns):
         raise ValueError(f"Gauge CSV is missing columns: {sorted(required - set(gauge.columns))}")
     gauge["Day"] = pd.to_datetime(gauge["Day"])
-    gauge["R"] = pd.to_numeric(gauge["R"], errors="coerce").fillna(0.0)
+    gauge["R"] = (
+        pd.to_numeric(gauge["R"], errors="coerce")
+        .fillna(0.0)
+        .clip(lower=0.0, upper=args.rain_threshold)
+    )
 
     station_info = gauge[["Station", "Lon", "Lat"]].drop_duplicates("Station")
     daily = gauge.pivot_table(
@@ -113,14 +146,22 @@ def fit_gauge_distributions(train, args, levels, gauge_dir):
     calendar = pd.date_range(daily.index.min(), daily.index.max(), freq="D")
     daily = daily.reindex(calendar, fill_value=0.0)
     weekly = daily.rolling(args.window_days, min_periods=args.window_days).sum()
+    fallback_weekly = daily.rolling(
+        args.window_days + 1, min_periods=args.window_days + 1
+    ).sum()
 
-    base_dates = pd.to_datetime(
-        {"year": train["year"], "month": train["month"], "day": train["day"]}
-    )
+    base_dates, invalid_base_dates = assemble_base_dates(train)
     target_dates = base_dates + pd.to_timedelta(train["leadTime"], unit="D")
     if target_dates.min() < weekly.index.min() or target_dates.max() > weekly.index.max():
         raise ValueError("Gauge CSV does not cover all train target windows")
     target_values = weekly.reindex(target_dates).reset_index(drop=True)
+    if invalid_base_dates.any():
+        # CustomDataset3 uses [Feb-28 + lead-window, Feb-28 + lead] for its
+        # invalid-date fallback, which is an inclusive window of window+1 days.
+        invalid_targets = target_dates[invalid_base_dates]
+        target_values.loc[invalid_base_dates.to_numpy(), :] = (
+            fallback_weekly.reindex(invalid_targets).to_numpy()
+        )
     if target_values.isna().any().any():
         raise ValueError("Gauge extraction produced missing train targets")
 
@@ -149,6 +190,11 @@ def fit_gauge_distributions(train, args, levels, gauge_dir):
         "n_station_cells": int(len(values_by_cell)),
         "target_date_min": str(target_dates.min().date()),
         "target_date_max": str(target_dates.max().date()),
+        "invalid_base_date_rows": int(invalid_base_dates.sum()),
+        "invalid_base_date_policy": (
+            "Match CustomDataset3: replace non-leap Feb 29 by Feb 28; "
+            "gauge fallback uses an inclusive window_days+1 interval"
+        ),
         "stations_per_cell": {
             f"{row:02d}_{column:02d}": count
             for (row, column), count in sorted(station_count_by_cell.items())
@@ -162,7 +208,7 @@ def parse_args():
     parser.add_argument("--gauge-csv", required=True, type=Path)
     parser.add_argument("--ecmwf-root", type=Path)
     parser.add_argument("--output-root", type=Path, default=Path("quantile_distributions/train_only"))
-    parser.add_argument("--year-origin", type=int, default=2002)
+    parser.add_argument("--year-origin", type=int, default=2004)
     parser.add_argument("--precip-feature-index", type=int, default=12)
     parser.add_argument("--window-days", type=int, default=7)
     parser.add_argument("--levels", type=int, default=100)
@@ -171,6 +217,7 @@ def parse_args():
     parser.add_argument("--lat-start", type=float, default=23.25)
     parser.add_argument("--lon-start", type=float, default=102.25)
     parser.add_argument("--step", type=float, default=0.125)
+    parser.add_argument("--rain-threshold", type=float, default=300.0)
     parser.add_argument("--overwrite", action="store_true")
     return parser.parse_args()
 
@@ -182,9 +229,7 @@ def main():
     if not required.issubset(train.columns):
         raise ValueError(f"Train index is missing columns: {sorted(required - set(train.columns))}")
     levels = np.linspace(0, 1, args.levels, dtype=np.float32)
-    base_dates = pd.to_datetime(
-        {"year": train["year"], "month": train["month"], "day": train["day"]}
-    )
+    base_dates, invalid_base_dates = assemble_base_dates(train)
     root, grid_dir, gauge_dir = prepare_output(args.output_root, args.overwrite)
 
     grid_metadata = fit_grid_distributions(train, args, levels, grid_dir)
@@ -203,6 +248,8 @@ def main():
         "quantile_levels": int(args.levels),
         "window_days": int(args.window_days),
         "precip_feature_index": int(args.precip_feature_index),
+        "rain_threshold_mm_day": float(args.rain_threshold),
+        "invalid_base_date_rows": int(invalid_base_dates.sum()),
         "grid": grid_metadata,
         "gauge": gauge_metadata,
         "created_at_utc": datetime.now(timezone.utc).isoformat(),
