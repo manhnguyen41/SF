@@ -6,6 +6,17 @@ GSMAP_TIME_STEPS=(7)
 ECMWF_TIME_STEPS=(7)
 PATCH=(3)
 SEEDS=(52) # 52 62 72 82 92
+QUANTILE_ROOT="${QUANTILE_ROOT:-quantile_distributions/train_only}"
+export VIFOS_QUANTILE_GRID_DIR="${VIFOS_QUANTILE_GRID_DIR:-${QUANTILE_ROOT}/s2s}"
+export VIFOS_QUANTILE_GAUGE_DIR="${VIFOS_QUANTILE_GAUGE_DIR:-${QUANTILE_ROOT}/gauge}"
+export VIFOS_TEST_ONLY=1
+export VIFOS_EXPERIMENT_NAME="${VIFOS_EXPERIMENT_NAME:-quantile_mapping_train_only}"
+
+if [[ ! -d "$VIFOS_QUANTILE_GRID_DIR" || ! -d "$VIFOS_QUANTILE_GAUGE_DIR" ]]; then
+  echo "Missing train-only Quantile Mapping distributions under: $QUANTILE_ROOT" >&2
+  echo "Run script/quantile/fit_train_only_distributions.py first." >&2
+  exit 1
+fi
 for gsmap in "${GSMAP_TIME_STEPS[@]}"; do
   for ecmwf in "${ECMWF_TIME_STEPS[@]}"; do
     for bs in "${BATCH_SIZES[@]}"; do

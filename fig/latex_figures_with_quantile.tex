@@ -1,0 +1,97 @@
+% Requires: \usepackage{graphicx} and \usepackage{subcaption}
+
+\begin{figure*}[t]
+    \centering
+    \begin{subfigure}{\textwidth}
+        \centering
+        \includegraphics[width=0.95\textwidth]{image/legend.pdf}
+        \vspace{5pt}
+    \end{subfigure}
+
+    \begin{subfigure}{0.48\textwidth}
+        \centering
+        \includegraphics[width=\textwidth]{image/r2_comparison.eps}
+        \caption{$R^2$ across different lead times.}
+        \label{fig:r2_leadtime_comparison}
+    \end{subfigure}
+    \hfill
+    \begin{subfigure}{0.48\textwidth}
+        \centering
+        \includegraphics[width=\textwidth]{image/corr_comparison.eps}
+        \caption{Correlation across different lead times.}
+        \label{fig:corr_leadtime_comparison}
+    \end{subfigure}
+
+    \vspace{0.3cm}
+
+    \begin{subfigure}{0.48\textwidth}
+        \centering
+        \includegraphics[width=\textwidth]{image/mae_comparison.eps}
+        \caption{MAE across different lead times.}
+        \label{fig:mae_leadtime_comparison}
+    \end{subfigure}
+    \hfill
+    \begin{subfigure}{0.48\textwidth}
+        \centering
+        \includegraphics[width=\textwidth]{image/rmse_comparison.eps}
+        \caption{RMSE across different lead times.}
+        \label{fig:rmse_leadtime_comparison}
+    \end{subfigure}
+
+    \caption{Performance comparison of Full VIFOS, ECMWF-S2S, CNN-LSTM,
+    U-Net, the S2S-only Transformer, and Quantile Mapping across lead times
+    using four evaluation metrics: $R^2$, correlation, MAE, and RMSE.}
+    \label{fig:metrics_leadtime_comparison}
+\end{figure*}
+
+\begin{figure*}[t]
+    \centering
+    \begin{subfigure}{0.32\textwidth}
+        \centering
+        \includegraphics[width=\textwidth]{image/4-results/Station/S2S/leadtime7/s2s_comparison.eps}
+        \caption{ECMWF-S2S}
+        \label{fig:lineplot_s2s}
+    \end{subfigure}
+    \hfill
+    \begin{subfigure}{0.32\textwidth}
+        \centering
+        \includegraphics[width=\textwidth]{image/4-results/Station/S2S/leadtime7/cnn-lstm_comparison.eps}
+        \caption{CNN-LSTM}
+        \label{fig:lineplot_cnn_lstm}
+    \end{subfigure}
+    \hfill
+    \begin{subfigure}{0.32\textwidth}
+        \centering
+        \includegraphics[width=\textwidth]{image/4-results/Station/S2S/leadtime7/unet_comparison.eps}
+        \caption{U-Net}
+        \label{fig:lineplot_unet}
+    \end{subfigure}
+
+    \vspace{0.3cm}
+
+    \begin{subfigure}{0.32\textwidth}
+        \centering
+        \includegraphics[width=\textwidth]{image/4-results/Station/S2S/leadtime7/s2s-only_transformer_comparison.eps}
+        \caption{S2S-only Transformer}
+        \label{fig:lineplot_s2s_only}
+    \end{subfigure}
+    \hfill
+    \begin{subfigure}{0.32\textwidth}
+        \centering
+        \includegraphics[width=\textwidth]{image/4-results/Station/S2S/leadtime7/ours_comparison.eps}
+        \caption{Full VIFOS}
+        \label{fig:lineplot_vifos}
+    \end{subfigure}
+    \hfill
+    \begin{subfigure}{0.32\textwidth}
+        \centering
+        \includegraphics[width=\textwidth]{image/4-results/Station/S2S/leadtime7/quantile_mapping_comparison.eps}
+        \caption{Quantile Mapping}
+        \label{fig:lineplot_quantile}
+    \end{subfigure}
+
+    \caption{Comparison of prediction results at station S11 for lead day 7.
+    The horizontal axis denotes the order of the test samples. Prediction
+    colors match those used in the lead-time comparison.}
+    \label{fig:lineplot}
+\end{figure*}

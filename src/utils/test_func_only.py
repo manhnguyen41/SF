@@ -1215,6 +1215,10 @@ def load_quantile_distribution(grid_dir, gauge_dir):
         key = os.path.basename(file_path).replace(".npz", "")
         data = np.load(file_path)
         gauge_distribution[key] = (data["quantiles"], data["levels"])
+    if not grid_distribution:
+        raise FileNotFoundError(f"No grid quantile distributions found in: {grid_dir}")
+    if not gauge_distribution:
+        raise FileNotFoundError(f"No gauge quantile distributions found in: {gauge_dir}")
     return grid_distribution, gauge_distribution
 
 
@@ -1250,8 +1254,14 @@ def test_func_quantile(
     list_lead_time = []
     list_lon = []
     list_lat = []
+    quantile_grid_dir = os.getenv(
+        "VIFOS_QUANTILE_GRID_DIR", "quantile_distributions/train_only/s2s"
+    )
+    quantile_gauge_dir = os.getenv(
+        "VIFOS_QUANTILE_GAUGE_DIR", "quantile_distributions/train_only/gauge"
+    )
     grid_distribution, gauge_distribution = load_quantile_distribution(
-        "s2s/distribution", "gauss/distribution"
+        quantile_grid_dir, quantile_gauge_dir
     )
     test_dataloader = DataLoader(
         test_dataset,
@@ -1334,6 +1344,8 @@ def test_func_quantile(
             "test_end_to_end_seconds": inference_seconds,
             "quantile_mapping_ms_per_sample": 1000 * inference_seconds / len(observation),
             "test_peak_gpu_memory_mb": 0.0,
+            "quantile_grid_distribution_dir": str(Path(quantile_grid_dir).resolve()),
+            "quantile_gauge_distribution_dir": str(Path(quantile_gauge_dir).resolve()),
         }
     )
     if result_dir is None:
